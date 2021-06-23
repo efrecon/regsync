@@ -9,7 +9,10 @@ re-rooted under a top project name, for example.
 When copying images, [`sync.sh`](./sync.sh) will use the local Docker storage to
 pull, re-tag and push. Images that did not already exist at the local daemon
 prior to pulling will automatically be removed to avoid using too much disk
-space at the local host daemon.
+space at the local host daemon. By default, image removal passes through a queue
+to maximise the chances for the daemon to reuse image layers and minimise disk
+operations. This is because images with the same name but different tags are
+likely to have a common set of layers.
 
 ## Requirements
 
