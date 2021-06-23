@@ -7,7 +7,7 @@ MGSH_DIR=${MGSH_DIR:-"${ROOT_DIR%/}/lib/mg.sh"}
 
 # Load dependencies from mg.sh library.
 for module in locals log options controls filesystem portability text date; do
-  # shellcheck disable=SC1091
+  # shellcheck disable=SC1090
   . "${MGSH_DIR%/}/${module}.sh"
 done
 
@@ -89,6 +89,11 @@ SYNC_DOCKER_JQ=${SYNC_DOCKER_JQ:-efrecon/jq:1.6}
 # components of the "path", i.e. in between the slashes of the source name.
 SYNC_RENAME=${SYNC_RENAME:-}
 
+# Size of the Docker image removal queue. All Docker images that should be
+# remove transit through the queue to give a chance to the Docker daemon to
+# cache layers and download less.
+SYNC_QUEUE=${SYNC_QUEUE:-20}
+
 parseopts \
   --main \
   --synopsis "Selectively copy Docker images from source to destination registry" \
@@ -102,6 +107,7 @@ parseopts \
     "x,exclude" OPTION EXCLUDE "-" "Regular expression to exclude tags from the selected ones" \
     "a,age" OPTION AGE "-" "Maximal age of images to be considered for copy" \
     "m,max,maximum" OPTION MAX "-" "Maximum number of images to synchronise" \
+    "queue" OPTION QUEUE "-" "Size of the Docker image removal queue" \
     "src-auth,source-auth" OPTION SRC_AUTH "-" "Colon separated username and password for access to source. Usually not needed and read from the environment instead" \
     "dst-auth,dest-auth,destination-auth" OPTION DST_AUTH "-" "Colon separated username and password for access to destination. Usually not needed and read from the environment instead" \
     "reg" OPTION REG_BIN "-" "How and where from to run reg" \
@@ -116,9 +122,48 @@ parseopts \
 # shellcheck disable=SC2154  # Var is set by parseopts
 shift "$_begin"
 
+if [ -d "/dev/shm" ]; then
+  RM_QUEUE=$(mktemp -p "/dev/shm")
+else
+  RM_QUEUE=$(mktemp)
+fi
+dst_inventory=
+
+trap 'cleanup; trap - EXIT; exit' EXIT INT HUP
+
+cleanup() {
+  if [ -f "$RM_QUEUE" ]; then
+    # flush the Docker image removal queue and clean up the file representing the
+    # queue.
+    rm_queue 0
+    rm -f "$RM_QUEUE"
+  fi
+
+  if [ -n "$dst_inventory" ] && [ -f "$dst_inventory" ]; then
+    # Remove inventory of remote registry
+    rm -f "$dst_inventory"
+    dst_inventory=""
+  fi
+}
+
 locate_keyword() {
   # shellcheck disable=SC2003
   expr "$(printf %s\\n "$1"|awk "END{print index(\$0,\"$2\")}"|head -n 1)" - "${#2}"
+}
+
+rm_queue() {
+  log_debug "Bringing Docker image queue size from $(wc -l < "$RM_QUEUE") down to ${1:-$SYNC_QUEUE}"
+  while [ "$(wc -l < "$RM_QUEUE")" -gt "${1:-$SYNC_QUEUE}" ]; do
+    img=$(head -n 1 "$RM_QUEUE")
+    [ -z "$img" ] && break
+    docker image rm "$img" || true
+
+    # Create a new temporary file in the same directory as $RM_QUEUE, remove the
+    # first line from $RM_QUEUE into the temp, and swap files.
+    tmpfname=$(mktemp -p "$(dirname "$RM_QUEUE")")
+    sed '1d' "$RM_QUEUE" > "$tmpfname"
+    mv "$tmpfname" "$RM_QUEUE"
+  done
 }
 
 # Call reg with a command, insert various authorisation details whenever
@@ -198,14 +243,19 @@ cp_image() {
 
       # Pull the image from the source registry, tag it with the name at the
       # destination registry. Once done, push to the destination registry and then
-      # remove from the source if the image was not already present.
+      # mark images for removal.
       docker image pull "${SYNC_SRC_REGISTRY%/}/${1}:${2}"
       docker image tag "${SYNC_SRC_REGISTRY%/}/${1}:${2}" "${SYNC_DST_REGISTRY%/}/${dst_name}:${2}"
       docker image push "${SYNC_DST_REGISTRY%/}/${dst_name}:${2}"
+
+      # Enqueue images for removal
       if [ "$present" = "0" ]; then
-        docker image rm "${SYNC_SRC_REGISTRY%/}/${1}:${2}"
+        printf %s\\n "${SYNC_SRC_REGISTRY%/}/${1}:${2}" >> "$RM_QUEUE"
       fi
-      docker image rm "${SYNC_DST_REGISTRY%/}/${dst_name}:${2}"
+      printf %s\\n "${SYNC_DST_REGISTRY%/}/${dst_name}:${2}" >> "$RM_QUEUE"
+
+      # Remove older entries from Docker image queue
+      rm_queue
     fi
   fi
 
@@ -382,5 +432,4 @@ done <<EOF
 $(reg_src ls "$SYNC_SRC_REGISTRY" | reg_ls | cut -d':' -f1 | sort -u)
 EOF
 
-# Remove inventory of remote registry
-rm -f "$dst_inventory"
+cleanup
