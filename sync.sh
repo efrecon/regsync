@@ -330,7 +330,7 @@ if [ -z "$SYNC_REG_BIN" ]; then
     log_debug "Using reg accessible as $SYNC_REG_BIN for registry operations"
 	else
 		log_debug "Will run reg as a Docker container using $SYNC_DOCKER_REG"
-		SYNC_REG_BIN="docker run -i --rm -v $HOME/.docker:/root/.docker:ro $SYNC_DOCKER_REG"
+		SYNC_REG_BIN="docker run --rm -v $HOME/.docker:/root/.docker:ro $SYNC_DOCKER_REG"
 	fi
 fi
 
