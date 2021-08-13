@@ -1,10 +1,11 @@
 # Docker Registry Sync
 
-This project is able to selectively synchronise images from a source Docker
-registry to a destination registry. Synchronisation is able to restrict to a
-subset of the existing images at the source, a subset of the tags or their age.
-Images can also be renamed on their way to the destination, so as to be
-re-rooted under a top project name, for example.
+This [project] and accompanying Docker [image] are able to selectively
+synchronise images from a source Docker registry to a destination registry.
+Synchronisation is able to restrict to a subset of the existing images at the
+source, a subset of the tags or their age. Images can also be renamed on their
+way to the destination, so as to be re-rooted under a top project name, for
+example.
 
 When copying images, [`sync.sh`](./sync.sh) will use the local Docker storage to
 pull, re-tag and push. Images that did not already exist at the local daemon
@@ -13,6 +14,9 @@ space at the local host daemon. By default, image removal passes through a queue
 to maximise the chances for the daemon to reuse image layers and minimise disk
 operations. This is because images with the same name but different tags are
 likely to have a common set of layers.
+
+  [project]: https://github.com/Mitigram/regsync
+  [image]: https://hub.docker.com/r/mitigram/regsync
 
 ## Requirements
 
@@ -73,5 +77,3 @@ docker run \
   mitigram/regsync \
     --help
 ```
-
-  [image]: https://hub.docker.com/r/mitigram/regsync
